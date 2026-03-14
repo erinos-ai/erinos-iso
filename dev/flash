@@ -6,8 +6,10 @@ set -euo pipefail
 # Requires: gh (GitHub CLI), sgdisk (gptfdisk)
 
 REPO="erinos-ai/erinos-iso"
-ISO_PATH="/tmp/erinos.iso"
 ENV_PATH="/tmp/erinos-env"
+
+# Usage: dev/flash [path/to/erinos.iso]
+ISO_PATH="${1:-}"
 
 # Locate .env.example: local checkout first, then fetch from GitHub
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -25,22 +27,31 @@ if [[ -z "$ENV_EXAMPLE" ]]; then
   gh api repos/erinos-ai/erinos-core/contents/.env.example --jq '.content' | base64 -d > "$ENV_EXAMPLE"
 fi
 
-# ── Download latest ISO ──────────────────────────────────────────────
-echo "Fetching latest ISO from GitHub Actions..."
+# ── Get ISO ──────────────────────────────────────────────────────────
+if [[ -n "$ISO_PATH" ]]; then
+  if [[ ! -f "$ISO_PATH" ]]; then
+    echo "ISO not found: ${ISO_PATH}"
+    exit 1
+  fi
+  echo "Using local ISO: ${ISO_PATH}"
+else
+  ISO_PATH="/tmp/erinos.iso"
+  echo "Fetching latest ISO from GitHub Actions..."
 
-RUN_ID=$(gh run list --repo "$REPO" --workflow build-iso.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-if [[ -z "$RUN_ID" ]]; then
-  echo "No successful build found."
-  exit 1
+  RUN_ID=$(gh run list --repo "$REPO" --workflow build-iso.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+  if [[ -z "$RUN_ID" ]]; then
+    echo "No successful build found."
+    exit 1
+  fi
+
+  ARTIFACT_NAME=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[0].name')
+  echo "Downloading artifact '${ARTIFACT_NAME}' from run #${RUN_ID}..."
+  rm -rf /tmp/erinos-iso
+  gh run download "$RUN_ID" --repo "$REPO" --name "$ARTIFACT_NAME" --dir /tmp/erinos-iso
+  mv /tmp/erinos-iso/erinos.iso "$ISO_PATH"
+  rm -rf /tmp/erinos-iso
+  echo "Downloaded: ${ISO_PATH}"
 fi
-
-ARTIFACT_NAME=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[0].name')
-echo "Downloading artifact '${ARTIFACT_NAME}' from run #${RUN_ID}..."
-rm -rf /tmp/erinos-iso
-gh run download "$RUN_ID" --repo "$REPO" --name "$ARTIFACT_NAME" --dir /tmp/erinos-iso
-mv /tmp/erinos-iso/erinos.iso "$ISO_PATH"
-rm -rf /tmp/erinos-iso
-echo "Downloaded: ${ISO_PATH}"
 
 # ── Prepare .env ─────────────────────────────────────────────────────
 cp "$ENV_EXAMPLE" "$ENV_PATH"
