@@ -164,28 +164,65 @@ _do_install() {
   cp /usr/local/bin/erinos-console /mnt/usr/local/bin/erinos-console
   chmod 755 /mnt/usr/local/bin/erinos-firstboot /mnt/usr/local/bin/erinos-console
 
-  # Load .env from USB config partition
-  USB_ENV_LOADED=false
-  for part in $(blkid -t TYPE=vfat -o device 2>/dev/null); do
-    [[ "$part" == "${PART1}" ]] && continue
+  # Load .env and Ollama models from USB data partition (labeled ERINOS or FAT with erinos/.env)
+  USB_LOADED=false
+  USB_MODELS_COPIED=false
+
+  # First try the ERINOS-labeled data partition (ExFAT, from dev/flash)
+  ERINOS_PART=$(blkid -L ERINOS -o device 2>/dev/null || true)
+  if [[ -n "$ERINOS_PART" ]]; then
     USB_MNT=$(mktemp -d)
-    if mount -o ro "$part" "$USB_MNT" 2>/dev/null; then
+    if mount -o ro "$ERINOS_PART" "$USB_MNT" 2>/dev/null; then
       if [[ -f "$USB_MNT/erinos/.env" ]]; then
         cp "$USB_MNT/erinos/.env" /mnt/opt/erinos/.env
         chmod 600 /mnt/opt/erinos/.env
-        USB_ENV_LOADED=true
+        USB_LOADED=true
         ok "Configuration loaded from USB"
-        umount "$USB_MNT"
-        rmdir "$USB_MNT"
-        break
       fi
+
+      # Copy Ollama models if present
+      if [[ -d "$USB_MNT/erinos/models/manifests" ]]; then
+        OLLAMA_STORAGE="/mnt/usr/share/ollama/.ollama/models"
+        mkdir -p "$OLLAMA_STORAGE/manifests" "$OLLAMA_STORAGE/blobs"
+        cp -a "$USB_MNT/erinos/models/manifests/." "$OLLAMA_STORAGE/manifests/"
+        cp -a "$USB_MNT/erinos/models/blobs/." "$OLLAMA_STORAGE/blobs/"
+        USB_MODELS_COPIED=true
+        ok "Ollama models copied from USB"
+      fi
+
       umount "$USB_MNT"
     fi
     rmdir "$USB_MNT" 2>/dev/null || true
-  done
+  fi
 
-  if [[ "$USB_ENV_LOADED" != true ]]; then
+  # Fallback: try FAT partitions (backward compatibility)
+  if [[ "$USB_LOADED" != true ]]; then
+    for part in $(blkid -t TYPE=vfat -o device 2>/dev/null); do
+      [[ "$part" == "${PART1}" ]] && continue
+      USB_MNT=$(mktemp -d)
+      if mount -o ro "$part" "$USB_MNT" 2>/dev/null; then
+        if [[ -f "$USB_MNT/erinos/.env" ]]; then
+          cp "$USB_MNT/erinos/.env" /mnt/opt/erinos/.env
+          chmod 600 /mnt/opt/erinos/.env
+          USB_LOADED=true
+          ok "Configuration loaded from USB"
+          umount "$USB_MNT"
+          rmdir "$USB_MNT"
+          break
+        fi
+        umount "$USB_MNT"
+      fi
+      rmdir "$USB_MNT" 2>/dev/null || true
+    done
+  fi
+
+  if [[ "$USB_LOADED" != true ]]; then
     warn "No .env found on USB — you can create /opt/erinos/.env manually after boot"
+  fi
+
+  # Fix Ollama model ownership
+  if [[ "$USB_MODELS_COPIED" == true ]]; then
+    arch-chroot /mnt bash -c 'chown -R ollama:ollama /usr/share/ollama/.ollama' >>"$LOG" 2>&1 || true
   fi
 }
 try_step "Installing base system" _do_install

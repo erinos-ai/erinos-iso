@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Downloads the latest ErinOS ISO from GitHub Actions, flashes it to a USB drive,
+# copies a .env config file, and optionally copies local Ollama models.
+# Requires: gh (GitHub CLI), jq
+
+REPO="erinos-ai/erinos-iso"
+ISO_PATH="/tmp/erinos.iso"
+ENV_PATH="/tmp/erinos-env"
+
+# Locate .env.example: local checkout first, then fetch from GitHub
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_EXAMPLE=""
+for candidate in "$SCRIPT_DIR/../../erinos-core/.env.example" "$HOME/code/erinos-ai/erinos-core/.env.example"; do
+  if [[ -f "$candidate" ]]; then
+    ENV_EXAMPLE="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$ENV_EXAMPLE" ]]; then
+  echo "Fetching .env.example from GitHub..."
+  ENV_EXAMPLE="/tmp/erinos-env-example"
+  gh api repos/erinos-ai/erinos-core/contents/.env.example --jq '.content' | base64 -d > "$ENV_EXAMPLE"
+fi
+
+# ── Download latest ISO ──────────────────────────────────────────────
+echo "Fetching latest ISO from GitHub Actions..."
+
+RUN_ID=$(gh run list --repo "$REPO" --workflow build-iso.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+if [[ -z "$RUN_ID" ]]; then
+  echo "No successful build found."
+  exit 1
+fi
+
+ARTIFACT_NAME=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts" --jq '.artifacts[0].name')
+echo "Downloading artifact '${ARTIFACT_NAME}' from run #${RUN_ID}..."
+rm -rf /tmp/erinos-iso
+gh run download "$RUN_ID" --repo "$REPO" --name "$ARTIFACT_NAME" --dir /tmp/erinos-iso
+mv /tmp/erinos-iso/erinos.iso "$ISO_PATH"
+rm -rf /tmp/erinos-iso
+echo "Downloaded: ${ISO_PATH}"
+
+# ── Prepare .env ─────────────────────────────────────────────────────
+cp "$ENV_EXAMPLE" "$ENV_PATH"
+
+# Overlay values from local .env if present
+LOCAL_ENV=""
+for candidate in "$SCRIPT_DIR/../../erinos-core/.env" "$HOME/code/erinos-ai/erinos-core/.env"; do
+  if [[ -f "$candidate" ]]; then
+    LOCAL_ENV="$candidate"
+    break
+  fi
+done
+
+if [[ -n "$LOCAL_ENV" ]]; then
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    if grep -q "^${key}=" "$ENV_PATH"; then
+      sed -i '' "s|^${key}=.*|${key}=${value}|" "$ENV_PATH" 2>/dev/null || \
+      sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_PATH"
+    elif grep -q "^# ${key}=" "$ENV_PATH"; then
+      sed -i '' "s|^# ${key}=.*|${key}=${value}|" "$ENV_PATH" 2>/dev/null || \
+      sed -i "s|^# ${key}=.*|${key}=${value}|" "$ENV_PATH"
+    else
+      echo "${key}=${value}" >> "$ENV_PATH"
+    fi
+  done < "$LOCAL_ENV"
+fi
+
+echo ""
+echo "Opening configuration for editing..."
+echo "Fill in your values, save, and close the editor."
+"${EDITOR:-nano}" "$ENV_PATH"
+
+# Read ERIN_MODEL from the edited .env for model suggestion
+ERIN_MODEL=$(grep '^ERIN_MODEL=' "$ENV_PATH" 2>/dev/null | cut -d= -f2 || true)
+ERIN_PROVIDER=$(grep '^ERIN_PROVIDER=' "$ENV_PATH" 2>/dev/null | cut -d= -f2 || true)
+
+# ── Select target disk ──────────────────────────────────────────────
+echo ""
+echo "Available disks:"
+if [[ "$(uname)" == "Darwin" ]]; then
+  diskutil list external physical
+else
+  lsblk -d -o NAME,SIZE,MODEL -n | grep -v "^loop\|^sr\|^ram"
+fi
+
+echo ""
+read -rp "Target disk (e.g. disk4 or sdb): " DISK_NAME
+DISK="/dev/${DISK_NAME}"
+
+if [[ ! -b "$DISK" ]] && [[ ! -b "/dev/r${DISK_NAME}" ]]; then
+  echo "Disk not found: ${DISK}"
+  exit 1
+fi
+
+echo ""
+echo "WARNING: This will ERASE ${DISK} and write the ErinOS installer ISO."
+read -rp "Type YES to confirm: " CONFIRM
+if [[ "$CONFIRM" != "YES" ]]; then
+  rm -f "$ENV_PATH"
+  echo "Aborted."
+  exit 0
+fi
+
+# Pre-authenticate sudo
+sudo true
+
+# ── Flash ISO ────────────────────────────────────────────────────────
+echo "Flashing ISO..."
+if [[ "$(uname)" == "Darwin" ]]; then
+  diskutil unmountDisk "$DISK"
+  if command -v pv &>/dev/null; then
+    pv "$ISO_PATH" | sudo dd of="/dev/r${DISK_NAME}" bs=4m 2>/dev/null
+  else
+    echo "(install pv for a progress bar: brew install pv)"
+    sudo dd if="$ISO_PATH" of="/dev/r${DISK_NAME}" bs=4m 2>&1
+  fi
+else
+  sudo umount "${DISK}"* 2>/dev/null || true
+  if command -v pv &>/dev/null; then
+    pv "$ISO_PATH" | sudo dd of="$DISK" bs=4M oflag=sync 2>/dev/null
+  else
+    sudo dd if="$ISO_PATH" of="$DISK" bs=4M status=progress oflag=sync
+  fi
+  sync
+fi
+echo "ISO written."
+sleep 2
+
+# ── Create data partition ────────────────────────────────────────────
+echo "Creating data partition..."
+if [[ "$(uname)" == "Darwin" ]]; then
+  # On macOS, add an ExFAT partition after the ISO's existing partitions
+  diskutil addPartition "${DISK_NAME}s2" ExFAT ERINOS R
+  DATA_PART="/dev/${DISK_NAME}s3"
+  DATA_MNT=$(diskutil info "$DATA_PART" | grep 'Mount Point' | sed 's/.*: *//')
+else
+  # On Linux, use sgdisk to create partition 3 in remaining space
+  sudo sgdisk -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
+  sudo partprobe "$DISK" 2>/dev/null || true
+  sleep 1
+  if [[ "$DISK" == *"nvme"* || "$DISK" == *"mmcblk"* ]]; then
+    DATA_PART="${DISK}p3"
+  else
+    DATA_PART="${DISK}3"
+  fi
+  sudo mkfs.exfat -L ERINOS "$DATA_PART"
+  DATA_MNT=$(mktemp -d)
+  sudo mount "$DATA_PART" "$DATA_MNT"
+fi
+
+# ── Copy .env ────────────────────────────────────────────────────────
+echo "Writing configuration..."
+sudo mkdir -p "$DATA_MNT/erinos"
+sudo cp "$ENV_PATH" "$DATA_MNT/erinos/.env"
+rm -f "$ENV_PATH"
+echo "Configuration written."
+
+# ── Copy Ollama models ───────────────────────────────────────────────
+OLLAMA_DIR="$HOME/.ollama/models"
+
+copy_ollama_model() {
+  local model_spec="$1"
+  local dest="$2"
+  local model="${model_spec%%:*}"
+  local tag="${model_spec#*:}"
+  [[ "$tag" == "$model" ]] && tag="latest"
+
+  local manifest="$OLLAMA_DIR/manifests/registry.ollama.ai/library/$model/$tag"
+  if [[ ! -f "$manifest" ]]; then
+    echo "Model $model_spec not found in local Ollama."
+    return 1
+  fi
+
+  local dest_models="$dest/erinos/models"
+  sudo mkdir -p "$dest_models/manifests/registry.ollama.ai/library/$model"
+  sudo mkdir -p "$dest_models/blobs"
+
+  # Copy manifest
+  sudo cp "$manifest" "$dest_models/manifests/registry.ollama.ai/library/$model/$tag"
+
+  # Copy all referenced blobs
+  local digests
+  digests=$(python3 -c "
+import json, sys
+m = json.load(open('$manifest'))
+print(m['config']['digest'].replace(':', '-'))
+for l in m['layers']:
+    print(l['digest'].replace(':', '-'))
+")
+
+  local total=0 copied=0
+  for digest in $digests; do total=$((total + 1)); done
+
+  for digest in $digests; do
+    copied=$((copied + 1))
+    local src="$OLLAMA_DIR/blobs/$digest"
+    if [[ -f "$src" ]]; then
+      local size
+      if [[ "$(uname)" == "Darwin" ]]; then
+        size=$(stat -f%z "$src" 2>/dev/null)
+      else
+        size=$(stat -c%s "$src" 2>/dev/null)
+      fi
+      local size_mb=$((size / 1048576))
+      echo "  [$copied/$total] Copying ${digest:0:19}... (${size_mb}MB)"
+      sudo cp "$src" "$dest_models/blobs/$digest"
+    fi
+  done
+
+  echo "Model $model_spec copied."
+}
+
+if [[ -d "$OLLAMA_DIR" ]] && command -v ollama &>/dev/null; then
+  echo ""
+
+  # Determine which models to offer
+  if [[ "${ERIN_PROVIDER:-}" == "ollama" && -n "${ERIN_MODEL:-}" ]]; then
+    # Check if the configured model exists locally
+    MODEL_NAME="${ERIN_MODEL%%:*}"
+    MODEL_TAG="${ERIN_MODEL#*:}"
+    [[ "$MODEL_TAG" == "$MODEL_NAME" ]] && MODEL_TAG="latest"
+
+    if [[ -f "$OLLAMA_DIR/manifests/registry.ollama.ai/library/$MODEL_NAME/$MODEL_TAG" ]]; then
+      read -rp "Copy local Ollama model '$ERIN_MODEL' to USB? [Y/n] " COPY_MODEL
+      COPY_MODEL="${COPY_MODEL:-Y}"
+      if [[ "$COPY_MODEL" =~ ^[Yy] ]]; then
+        copy_ollama_model "$ERIN_MODEL" "$DATA_MNT"
+      fi
+    else
+      echo "Model '$ERIN_MODEL' (from .env) not found locally."
+      echo "Available local models:"
+      ollama list 2>/dev/null | tail -n +2 | grep -v 'cloud' | awk '{print "  " $1}'
+      echo ""
+      read -rp "Enter a model to copy (or leave blank to skip): " CHOSEN_MODEL
+      if [[ -n "$CHOSEN_MODEL" ]]; then
+        copy_ollama_model "$CHOSEN_MODEL" "$DATA_MNT"
+      fi
+    fi
+  else
+    echo "Available local Ollama models:"
+    ollama list 2>/dev/null | tail -n +2 | grep -v 'cloud' | awk '{print "  " $1}'
+    echo ""
+    read -rp "Enter a model to copy to USB (or leave blank to skip): " CHOSEN_MODEL
+    if [[ -n "$CHOSEN_MODEL" ]]; then
+      copy_ollama_model "$CHOSEN_MODEL" "$DATA_MNT"
+    fi
+  fi
+else
+  echo "Ollama not found locally — skipping model copy."
+fi
+
+# ── Unmount and eject ────────────────────────────────────────────────
+echo ""
+if [[ "$(uname)" == "Darwin" ]]; then
+  diskutil unmount "$DATA_PART" >/dev/null 2>&1 || true
+  diskutil eject "$DISK"
+else
+  sudo umount "$DATA_MNT"
+  rmdir "$DATA_MNT"
+fi
+
+echo "Done. USB drive is ready."
