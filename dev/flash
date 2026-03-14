@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Downloads the latest ErinOS ISO from GitHub Actions, flashes it to a USB drive,
 # copies a .env config file, and optionally copies local Ollama models.
-# Requires: gh (GitHub CLI), jq
+# Requires: gh (GitHub CLI), sgdisk (gptfdisk)
 
 REPO="erinos-ai/erinos-iso"
 ISO_PATH="/tmp/erinos.iso"
@@ -132,14 +132,27 @@ sleep 2
 
 # ── Create data partition ────────────────────────────────────────────
 echo "Creating data partition..."
+
+if ! command -v sgdisk &>/dev/null; then
+  echo "sgdisk not found. Install it:"
+  echo "  macOS: brew install gptfdisk"
+  echo "  Linux: pacman -S gptfdisk / apt install gdisk"
+  exit 1
+fi
+
+# Move backup GPT to end of physical disk (ISO leaves it at end of image)
+sudo sgdisk -e "$DISK" >/dev/null 2>&1
+# Create partition 3 in remaining space
+sudo sgdisk -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
+
 if [[ "$(uname)" == "Darwin" ]]; then
-  # On macOS, add an ExFAT partition after the ISO's existing partitions
-  diskutil addPartition "${DISK_NAME}s2" ExFAT ERINOS 0
+  sleep 1
+  diskutil unmountDisk "$DISK" >/dev/null 2>&1 || true
   DATA_PART="/dev/${DISK_NAME}s3"
+  sudo newfs_exfat -v ERINOS "$DATA_PART"
+  diskutil mount "$DATA_PART" >/dev/null 2>&1
   DATA_MNT=$(diskutil info "$DATA_PART" | grep 'Mount Point' | sed 's/.*: *//')
 else
-  # On Linux, use sgdisk to create partition 3 in remaining space
-  sudo sgdisk -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
   sudo partprobe "$DISK" 2>/dev/null || true
   sleep 1
   if [[ "$DISK" == *"nvme"* || "$DISK" == *"mmcblk"* ]]; then
