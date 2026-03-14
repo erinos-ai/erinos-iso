@@ -152,7 +152,12 @@ if ! command -v sgdisk &>/dev/null; then
 fi
 
 # Move backup GPT to end of physical disk (ISO leaves it at end of image)
-sudo sgdisk -e "$DISK" >/dev/null 2>&1
+# Must be a separate invocation so the updated geometry is written before
+# we try to create a partition in the newly available space.
+sudo sgdisk -e "$DISK"
+sync
+sleep 1
+
 # Create partition 3 in remaining space
 sudo sgdisk -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
 
