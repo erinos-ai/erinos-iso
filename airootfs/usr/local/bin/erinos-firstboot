@@ -25,7 +25,7 @@ for _ in $(seq 1 60); do
   sleep 5
 done
 
-# ── Pull Ollama model (skip if already copied from USB) ──────────────
+# ── Ollama model ─────────────────────────────────────────────────────
 if [[ "$ERIN_PROVIDER" == "ollama" && -n "$ERIN_MODEL" ]]; then
   progress "Waiting for Ollama..."
   for _ in $(seq 1 60); do
@@ -33,19 +33,35 @@ if [[ "$ERIN_PROVIDER" == "ollama" && -n "$ERIN_MODEL" ]]; then
     sleep 5
   done
 
-  # Check if the model was pre-loaded from USB during installation
-  if ollama list 2>/dev/null | grep -q "^${ERIN_MODEL}"; then
-    progress "Model ${ERIN_MODEL} already available (copied from USB)"
-  else
+  # Import staged models from USB (copied by installer to a staging dir)
+  STAGING="/opt/erinos/ollama-staging"
+  if [[ -d "$STAGING/manifests" ]]; then
+    progress "Importing model from USB..."
+    OLLAMA_HOME=$(eval echo "~ollama")
+    OLLAMA_MODELS="${OLLAMA_HOME}/.ollama/models"
+    mkdir -p "$OLLAMA_MODELS/manifests" "$OLLAMA_MODELS/blobs"
+    cp -a "$STAGING/manifests/." "$OLLAMA_MODELS/manifests/"
+    cp -a "$STAGING/blobs/." "$OLLAMA_MODELS/blobs/"
+    chown -R ollama:ollama "$OLLAMA_HOME/.ollama"
+    # Restart Ollama so it picks up the new model files
+    systemctl restart ollama >> "$LOG" 2>&1
+    sleep 3
+    rm -rf "$STAGING"
+    progress "Model imported from USB"
+  fi
+
+  # Pull if model still not available (no USB copy, or different model)
+  if ! ollama list 2>/dev/null | grep -q "^${ERIN_MODEL}"; then
     export OLLAMA_MAX_PARALLEL_DOWNLOADS="${OLLAMA_MAX_PARALLEL_DOWNLOADS:-2}"
     ollama pull "$ERIN_MODEL" 2>&1 | while IFS= read -r line; do
       echo "$line" >> "$LOG"
-      # Extract percentage from ollama pull output (e.g., "pulling abc123... 45% ▕██  ▏")
       pct=$(echo "$line" | grep -oE '[0-9]+%' | tail -1)
       if [[ -n "$pct" ]]; then
         progress "Downloading ${ERIN_MODEL}... ${pct}"
       fi
     done
+  else
+    progress "Model ${ERIN_MODEL} ready"
   fi
 fi
 

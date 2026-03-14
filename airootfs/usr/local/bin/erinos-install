@@ -180,14 +180,13 @@ _do_install() {
         ok "Configuration loaded from USB"
       fi
 
-      # Copy Ollama models if present
+      # Stage Ollama models for firstboot to import
       if [[ -d "$USB_MNT/erinos/models/manifests" ]]; then
-        OLLAMA_STORAGE="/mnt/usr/share/ollama/.ollama/models"
-        mkdir -p "$OLLAMA_STORAGE/manifests" "$OLLAMA_STORAGE/blobs"
-        cp -a "$USB_MNT/erinos/models/manifests/." "$OLLAMA_STORAGE/manifests/"
-        cp -a "$USB_MNT/erinos/models/blobs/." "$OLLAMA_STORAGE/blobs/"
+        STAGING="/mnt/opt/erinos/ollama-staging"
+        mkdir -p "$STAGING"
+        cp -a "$USB_MNT/erinos/models/." "$STAGING/"
         USB_MODELS_COPIED=true
-        ok "Ollama models copied from USB"
+        ok "Ollama models staged from USB"
       fi
 
       umount "$USB_MNT"
@@ -220,9 +219,8 @@ _do_install() {
     warn "No .env found on USB — you can create /opt/erinos/.env manually after boot"
   fi
 
-  # Fix Ollama model ownership
   if [[ "$USB_MODELS_COPIED" == true ]]; then
-    arch-chroot /mnt bash -c 'chown -R ollama:ollama /usr/share/ollama/.ollama' >>"$LOG" 2>&1 || true
+    arch-chroot /mnt chown -R erinos: /opt/erinos/ollama-staging >>"$LOG" 2>&1 || true
   fi
 }
 try_step "Installing base system" _do_install
