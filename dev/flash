@@ -151,23 +151,10 @@ if ! command -v sgdisk &>/dev/null; then
   exit 1
 fi
 
-# Move backup GPT to end of physical disk (ISO leaves it at end of image)
-# Must be a separate invocation so the updated geometry is written before
-# we try to create a partition in the newly available space.
-sudo sgdisk -e "$DISK"
-sync
-sleep 1
-
-# Force macOS to re-read the partition table
-if [[ "$(uname)" == "Darwin" ]]; then
-  diskutil unmountDisk "$DISK" >/dev/null 2>&1 || true
-  diskutil mountDisk "$DISK" >/dev/null 2>&1 || true
-  diskutil unmountDisk "$DISK" >/dev/null 2>&1 || true
-  sleep 1
-fi
-
-# Create partition 3 in remaining space
-sudo sgdisk -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
+# Relocate backup GPT to end of physical disk and create data partition
+# in one pass — the ISO leaves the backup GPT at the end of the image,
+# so sgdisk must fix geometry and add the partition in a single invocation.
+sudo sgdisk -e -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
 
 if [[ "$(uname)" == "Darwin" ]]; then
   sleep 1
