@@ -158,6 +158,14 @@ sudo sgdisk -e "$DISK"
 sync
 sleep 1
 
+# Force macOS to re-read the partition table
+if [[ "$(uname)" == "Darwin" ]]; then
+  diskutil unmountDisk "$DISK" >/dev/null 2>&1 || true
+  diskutil mountDisk "$DISK" >/dev/null 2>&1 || true
+  diskutil unmountDisk "$DISK" >/dev/null 2>&1 || true
+  sleep 1
+fi
+
 # Create partition 3 in remaining space
 sudo sgdisk -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
 
