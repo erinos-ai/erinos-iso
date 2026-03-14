@@ -134,7 +134,7 @@ sleep 2
 echo "Creating data partition..."
 if [[ "$(uname)" == "Darwin" ]]; then
   # On macOS, add an ExFAT partition after the ISO's existing partitions
-  diskutil addPartition "${DISK_NAME}s2" ExFAT ERINOS R
+  diskutil addPartition "${DISK_NAME}s2" ExFAT ERINOS 0
   DATA_PART="/dev/${DISK_NAME}s3"
   DATA_MNT=$(diskutil info "$DATA_PART" | grep 'Mount Point' | sed 's/.*: *//')
 else
