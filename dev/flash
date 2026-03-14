@@ -151,10 +151,12 @@ if ! command -v sgdisk &>/dev/null; then
   exit 1
 fi
 
-# Relocate backup GPT to end of physical disk and create data partition
-# in one pass — the ISO leaves the backup GPT at the end of the image,
-# so sgdisk must fix geometry and add the partition in a single invocation.
-sudo sgdisk -e -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
+# The ISO has 3 partitions (ISO9660, EFI, Gap1) and a backup GPT at the
+# end of the image (~821MB), not the physical disk. In one pass:
+# 1. Delete the Gap1 filler partition (3)
+# 2. Move backup GPT to end of physical disk (-e)
+# 3. Create a new partition 3 spanning the remaining space
+sudo sgdisk -d 3 -e -n 3:0:0 -t 3:0700 -c 3:ERINOS "$DISK"
 
 if [[ "$(uname)" == "Darwin" ]]; then
   sleep 1
