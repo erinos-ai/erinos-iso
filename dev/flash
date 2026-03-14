@@ -232,8 +232,13 @@ for l in m['layers']:
         size=$(stat -c%s "$src" 2>/dev/null)
       fi
       local size_mb=$((size / 1048576))
-      echo "  [$copied/$total] Copying ${digest:0:19}... (${size_mb}MB)"
-      sudo cp "$src" "$dest_models/blobs/$digest"
+      if command -v pv &>/dev/null && [[ $size -gt 10485760 ]]; then
+        echo "  [$copied/$total] ${digest:0:19} (${size_mb}MB)"
+        sudo sh -c "pv '$src' > '$dest_models/blobs/$digest'"
+      else
+        echo "  [$copied/$total] Copying ${digest:0:19}... (${size_mb}MB)"
+        sudo cp "$src" "$dest_models/blobs/$digest"
+      fi
     fi
   done
 
