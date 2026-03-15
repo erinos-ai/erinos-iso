@@ -37,13 +37,14 @@ if [[ "$ERIN_PROVIDER" == "ollama" && -n "$ERIN_MODEL" ]]; then
   STAGING="/opt/erinos/ollama-staging"
   if [[ -d "$STAGING/manifests" ]]; then
     progress "Importing model from USB..."
-    OLLAMA_HOME=$(eval echo "~ollama")
-    OLLAMA_MODELS="${OLLAMA_HOME}/.ollama/models"
-    mkdir -p "$OLLAMA_MODELS/manifests" "$OLLAMA_MODELS/blobs"
-    cp -a "$STAGING/manifests/." "$OLLAMA_MODELS/manifests/"
-    cp -a "$STAGING/blobs/." "$OLLAMA_MODELS/blobs/"
-    chown -R ollama:ollama "$OLLAMA_HOME/.ollama"
-    # Restart Ollama so it picks up the new model files
+    # Ollama stores models at $HOME/manifests and $HOME/blobs (HOME=/var/lib/ollama)
+    OLLAMA_HOME="/var/lib/ollama"
+    mkdir -p "$OLLAMA_HOME/manifests" "$OLLAMA_HOME/blobs"
+    cp -a "$STAGING/manifests/." "$OLLAMA_HOME/manifests/"
+    cp -a "$STAGING/blobs/." "$OLLAMA_HOME/blobs/"
+    # Clean macOS resource fork files from USB copy
+    find "$OLLAMA_HOME/manifests" "$OLLAMA_HOME/blobs" -name '._*' -delete
+    chown -R ollama:ollama "$OLLAMA_HOME"
     systemctl restart ollama >> "$LOG" 2>&1
     sleep 3
     rm -rf "$STAGING"
