@@ -184,6 +184,8 @@ _do_install() {
       if [[ -d "$USB_MNT/erinos/models/manifests" ]]; then
         STAGING="/mnt/opt/erinos/ollama-staging"
         mkdir -p "$STAGING"
+        MODEL_SIZE=$(du -sh "$USB_MNT/erinos/models" 2>/dev/null | cut -f1)
+        printf '  \033[38;5;%sm…\033[0m Copying Ollama models (%s), this may take a few minutes...\n' "$YELLOW" "${MODEL_SIZE:-?}"
         cp -a "$USB_MNT/erinos/models/." "$STAGING/"
         USB_MODELS_COPIED=true
         ok "Ollama models staged from USB"
