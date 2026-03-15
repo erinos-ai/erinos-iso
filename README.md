@@ -44,7 +44,7 @@ Download the ISO from the GitHub Actions artifacts tab, or from the GitHub Relea
 
 ## Flashing a USB Drive
 
-The `dev/flash` script in [erinos-core](https://github.com/erinos-ai/erinos-core) automates this:
+The `dev/flash` script automates this:
 
 ```bash
 ./dev/flash
@@ -69,6 +69,24 @@ The installer loads a pre-configured `.env` from the USB drive's EFI partition. 
 7. Wait for first-boot setup to complete
 
 Target hardware: Framework Desktop (Ryzen AI Max+ 395, 128GB, RDNA 3.5 iGPU).
+
+
+## Updating After Installation
+
+The ISO is only needed for initial installation. Once installed, the appliance can self-update erinos-core from GitHub releases without reflashing:
+
+```bash
+erinos update
+```
+
+See the [erinos-core README](https://github.com/erinos-ai/erinos-core#updating) for details.
+
+The ISO itself (base system, packages, installer scripts) is not updated by `erinos update` — only the application code in `/opt/erinos`. To update system packages, use `pacman -Syu` via SSH.
+
+
+## Versioning
+
+The ISO uses date-based versions (`YYYY.MM.DD`) defined in `profiledef.sh`. When building from a `v*` tag, the tag is stamped into the erinos-core `VERSION` file inside the ISO so the appliance knows which release it was installed from.
 
 
 ## Profile Structure

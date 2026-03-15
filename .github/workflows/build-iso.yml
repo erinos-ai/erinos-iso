@@ -26,6 +26,10 @@ jobs:
             --exclude='.git' \
             /tmp/erinos-core/ airootfs/root/erinos/
 
+      - name: Stamp version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "${{ github.ref_name }}" > airootfs/root/erinos/VERSION
+
       - name: Build ISO in Arch container
         run: |
           docker run --rm --privileged \
