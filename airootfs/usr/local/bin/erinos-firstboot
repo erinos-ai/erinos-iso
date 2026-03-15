@@ -78,7 +78,7 @@ fi
 
 # ── Initialize database ─────────────────────────────────────────────
 progress "Initializing database..."
-su erinos -s /bin/bash -c 'export PATH="/opt/erinos/.rbenv/bin:/opt/erinos/.rbenv/shims:$PATH" && cd /opt/erinos && bundle exec rake db:migrate db:seed' >>"$LOG" 2>&1
+su erinos -s /bin/bash -c 'export PATH="/opt/erinos/.rbenv/bin:/opt/erinos/.rbenv/shims:$PATH" && cd /opt/erinos && bundle exec ruby -e "require_relative \"config/application\"; ActiveRecord::MigrationContext.new(\"db/migrate\").migrate; load \"db/seeds.rb\""' >>"$LOG" 2>&1
 
 # ── Install default skills ────────────────────────────────────────────
 DEFAULT_SKILLS="${DEFAULT_SKILLS:-google}"
