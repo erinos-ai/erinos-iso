@@ -230,6 +230,10 @@ _do_configure() {
     CFG_TIMEZONE="${CFG_TIMEZONE:-UTC}"
   fi
 
+  # Read RAM from host (not chroot) where /proc/meminfo is always available
+  TOTAL_RAM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+  GTT_SIZE_MB=$(( TOTAL_RAM_MB * 85 / 100 ))
+
   arch-chroot /mnt /bin/bash >>"$LOG" 2>&1 <<CHROOT || { fail "System configuration failed"; tail -10 "$LOG"; return 1; }
 set -euo pipefail
 
@@ -269,10 +273,6 @@ chmod 600 /etc/NetworkManager/system-connections/Wired.nmconnection
 
 # Boot loader (systemd-boot)
 bootctl install
-
-# Reserve 85% of RAM for GPU (GTT) on AMD APUs — leave the rest for the OS
-TOTAL_RAM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
-GTT_SIZE_MB=$(( TOTAL_RAM_MB * 85 / 100 ))
 
 mkdir -p /boot/loader/entries
 cat > /boot/loader/loader.conf <<EOF
