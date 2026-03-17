@@ -85,10 +85,6 @@ echo "Opening configuration for editing..."
 echo "Fill in your values, save, and close the editor."
 "${EDITOR:-nano}" "$ENV_PATH"
 
-# Read ERIN_MODEL from the edited .env for model suggestion
-ERIN_MODEL=$(grep '^ERIN_MODEL=' "$ENV_PATH" 2>/dev/null | cut -d= -f2 || true)
-ERIN_PROVIDER=$(grep '^ERIN_PROVIDER=' "$ENV_PATH" 2>/dev/null | cut -d= -f2 || true)
-
 # ── Select target disk ──────────────────────────────────────────────
 echo ""
 echo "Available disks:"
@@ -184,105 +180,6 @@ sudo mkdir -p "$DATA_MNT/erinos"
 sudo cp "$ENV_PATH" "$DATA_MNT/erinos/.env"
 rm -f "$ENV_PATH"
 echo "Configuration written."
-
-# ── Copy Ollama models ───────────────────────────────────────────────
-OLLAMA_DIR="$HOME/.ollama/models"
-
-copy_ollama_model() {
-  local model_spec="$1"
-  local dest="$2"
-  local model="${model_spec%%:*}"
-  local tag="${model_spec#*:}"
-  [[ "$tag" == "$model" ]] && tag="latest"
-
-  local manifest="$OLLAMA_DIR/manifests/registry.ollama.ai/library/$model/$tag"
-  if [[ ! -f "$manifest" ]]; then
-    echo "Model $model_spec not found in local Ollama."
-    return 1
-  fi
-
-  local dest_models="$dest/erinos/models"
-  sudo mkdir -p "$dest_models/manifests/registry.ollama.ai/library/$model"
-  sudo mkdir -p "$dest_models/blobs"
-
-  # Copy manifest
-  sudo cp "$manifest" "$dest_models/manifests/registry.ollama.ai/library/$model/$tag"
-
-  # Copy all referenced blobs
-  local digests
-  digests=$(python3 -c "
-import json, sys
-m = json.load(open('$manifest'))
-print(m['config']['digest'].replace(':', '-'))
-for l in m['layers']:
-    print(l['digest'].replace(':', '-'))
-")
-
-  local total=0 copied=0
-  for digest in $digests; do total=$((total + 1)); done
-
-  for digest in $digests; do
-    copied=$((copied + 1))
-    local src="$OLLAMA_DIR/blobs/$digest"
-    if [[ -f "$src" ]]; then
-      local size
-      if [[ "$(uname)" == "Darwin" ]]; then
-        size=$(stat -f%z "$src" 2>/dev/null)
-      else
-        size=$(stat -c%s "$src" 2>/dev/null)
-      fi
-      local size_mb=$((size / 1048576))
-      if command -v pv &>/dev/null && [[ $size -gt 10485760 ]]; then
-        echo "  [$copied/$total] ${digest:0:19} (${size_mb}MB)"
-        sudo sh -c "pv '$src' > '$dest_models/blobs/$digest'"
-      else
-        echo "  [$copied/$total] Copying ${digest:0:19}... (${size_mb}MB)"
-        sudo cp "$src" "$dest_models/blobs/$digest"
-      fi
-    fi
-  done
-
-  echo "Model $model_spec copied."
-}
-
-if [[ -d "$OLLAMA_DIR" ]] && command -v ollama &>/dev/null; then
-  echo ""
-
-  # Determine which models to offer
-  if [[ "${ERIN_PROVIDER:-}" == "ollama" && -n "${ERIN_MODEL:-}" ]]; then
-    # Check if the configured model exists locally
-    MODEL_NAME="${ERIN_MODEL%%:*}"
-    MODEL_TAG="${ERIN_MODEL#*:}"
-    [[ "$MODEL_TAG" == "$MODEL_NAME" ]] && MODEL_TAG="latest"
-
-    if [[ -f "$OLLAMA_DIR/manifests/registry.ollama.ai/library/$MODEL_NAME/$MODEL_TAG" ]]; then
-      read -rp "Copy local Ollama model '$ERIN_MODEL' to USB? [Y/n] " COPY_MODEL
-      COPY_MODEL="${COPY_MODEL:-Y}"
-      if [[ "$COPY_MODEL" =~ ^[Yy] ]]; then
-        copy_ollama_model "$ERIN_MODEL" "$DATA_MNT"
-      fi
-    else
-      echo "Model '$ERIN_MODEL' (from .env) not found locally."
-      echo "Available local models:"
-      ollama list 2>/dev/null | tail -n +2 | grep -v 'cloud' | awk '{print "  " $1}'
-      echo ""
-      read -rp "Enter a model to copy (or leave blank to skip): " CHOSEN_MODEL
-      if [[ -n "$CHOSEN_MODEL" ]]; then
-        copy_ollama_model "$CHOSEN_MODEL" "$DATA_MNT"
-      fi
-    fi
-  else
-    echo "Available local Ollama models:"
-    ollama list 2>/dev/null | tail -n +2 | grep -v 'cloud' | awk '{print "  " $1}'
-    echo ""
-    read -rp "Enter a model to copy to USB (or leave blank to skip): " CHOSEN_MODEL
-    if [[ -n "$CHOSEN_MODEL" ]]; then
-      copy_ollama_model "$CHOSEN_MODEL" "$DATA_MNT"
-    fi
-  fi
-else
-  echo "Ollama not found locally — skipping model copy."
-fi
 
 # ── Unmount and eject ────────────────────────────────────────────────
 echo ""

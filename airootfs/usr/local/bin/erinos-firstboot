@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Non-interactive first-boot setup for ErinOS.
 # Runs as a one-shot systemd service on first boot.
-# Pulls the Ollama model, downloads whisper model, initializes DB, starts services.
+# Downloads whisper model, initializes DB, installs default skills, starts services.
 set -euo pipefail
 
 LOG="/tmp/erinos-firstboot.log"
@@ -15,56 +15,12 @@ export HOME="${HOME:-/root}"
 ENV_FILE="/opt/erinos/.env"
 source "$ENV_FILE" 2>/dev/null || true
 
-ERIN_PROVIDER="${ERIN_PROVIDER:-ollama}"
-ERIN_MODEL="${ERIN_MODEL:-}"
-
-# ── Wait for DNS ─────────────────────────────────────────────────────
+# ── Wait for network ─────────────────────────────────────────────────
 progress "Waiting for network..."
 for _ in $(seq 1 60); do
-  curl -fsSo /dev/null --max-time 3 https://ollama.com && break
+  curl -fsSo /dev/null --max-time 3 https://relay.erinos.ai/health && break
   sleep 5
 done
-
-# ── Ollama model ─────────────────────────────────────────────────────
-if [[ "$ERIN_PROVIDER" == "ollama" && -n "$ERIN_MODEL" ]]; then
-  progress "Waiting for Ollama..."
-  for _ in $(seq 1 60); do
-    ollama list &>/dev/null && break
-    sleep 5
-  done
-
-  # Import staged models from USB (copied by installer to a staging dir)
-  STAGING="/opt/erinos/ollama-staging"
-  if [[ -d "$STAGING/manifests" ]]; then
-    progress "Importing model from USB..."
-    # Ollama stores models at $HOME/manifests and $HOME/blobs (HOME=/var/lib/ollama)
-    OLLAMA_HOME="/var/lib/ollama"
-    mkdir -p "$OLLAMA_HOME/manifests" "$OLLAMA_HOME/blobs"
-    cp -a "$STAGING/manifests/." "$OLLAMA_HOME/manifests/"
-    cp -a "$STAGING/blobs/." "$OLLAMA_HOME/blobs/"
-    # Clean macOS resource fork files from USB copy
-    find "$OLLAMA_HOME/manifests" "$OLLAMA_HOME/blobs" -name '._*' -delete
-    chown -R ollama:ollama "$OLLAMA_HOME"
-    systemctl restart ollama >> "$LOG" 2>&1
-    sleep 3
-    rm -rf "$STAGING"
-    progress "Model imported from USB"
-  fi
-
-  # Pull if model still not available (no USB copy, or different model)
-  if ! ollama list 2>/dev/null | grep -q "^${ERIN_MODEL}"; then
-    export OLLAMA_MAX_PARALLEL_DOWNLOADS="${OLLAMA_MAX_PARALLEL_DOWNLOADS:-2}"
-    ollama pull "$ERIN_MODEL" 2>&1 | while IFS= read -r line; do
-      echo "$line" >> "$LOG"
-      pct=$(echo "$line" | grep -oE '[0-9]+%' | tail -1)
-      if [[ -n "$pct" ]]; then
-        progress "Downloading ${ERIN_MODEL}... ${pct}"
-      fi
-    done
-  else
-    progress "Model ${ERIN_MODEL} ready"
-  fi
-fi
 
 # ── Download Whisper model ───────────────────────────────────────────
 WHISPER_MODEL_PATH="/opt/erinos/models/ggml-base.en.bin"

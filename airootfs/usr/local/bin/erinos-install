@@ -166,7 +166,6 @@ _do_install() {
 
   # Load .env and Ollama models from USB data partition (labeled ERINOS or FAT with erinos/.env)
   USB_LOADED=false
-  USB_MODELS_COPIED=false
 
   # First try the ERINOS-labeled data partition (ExFAT, from dev/flash)
   ERINOS_PART=$(blkid -L ERINOS -o device 2>/dev/null || true)
@@ -178,17 +177,6 @@ _do_install() {
         chmod 600 /mnt/opt/erinos/.env
         USB_LOADED=true
         ok "Configuration loaded from USB"
-      fi
-
-      # Stage Ollama models for firstboot to import
-      if [[ -d "$USB_MNT/erinos/models/manifests" ]]; then
-        STAGING="/mnt/opt/erinos/ollama-staging"
-        mkdir -p "$STAGING"
-        MODEL_SIZE=$(du -sh "$USB_MNT/erinos/models" 2>/dev/null | cut -f1)
-        printf '  \033[38;5;%sm…\033[0m Copying Ollama models (%s), this may take a few minutes...\n' "$YELLOW" "${MODEL_SIZE:-?}"
-        cp -a "$USB_MNT/erinos/models/." "$STAGING/"
-        USB_MODELS_COPIED=true
-        ok "Ollama models staged from USB"
       fi
 
       umount "$USB_MNT"
@@ -221,9 +209,6 @@ _do_install() {
     warn "No .env found on USB — you can create /opt/erinos/.env manually after boot"
   fi
 
-  if [[ "$USB_MODELS_COPIED" == true ]]; then
-    arch-chroot /mnt chown -R erinos: /opt/erinos/ollama-staging >>"$LOG" 2>&1 || true
-  fi
 }
 try_step "Installing base system" _do_install
 
