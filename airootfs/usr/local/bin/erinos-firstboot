@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Non-interactive first-boot setup for ErinOS.
 # Runs as a one-shot systemd service on first boot.
-# Pulls Ollama model, downloads whisper model, initializes DB, installs default skills, starts services.
+# Downloads whisper model, initializes DB, installs default skills, starts services.
+# Model download is handled via /model pull after boot.
 set -euo pipefail
 
 LOG="/tmp/erinos-firstboot.log"
@@ -21,31 +22,6 @@ for _ in $(seq 1 60); do
   curl -fsSo /dev/null --max-time 3 https://relay.erinos.ai/health && break
   sleep 5
 done
-
-# ── Ollama model ─────────────────────────────────────────────────────
-ERIN_PROVIDER="${ERIN_PROVIDER:-ollama}"
-ERIN_MODEL="${ERIN_MODEL:-}"
-
-if [[ "$ERIN_PROVIDER" == "ollama" && -n "$ERIN_MODEL" ]]; then
-  progress "Waiting for Ollama..."
-  for _ in $(seq 1 60); do
-    ollama list &>/dev/null && break
-    sleep 5
-  done
-
-  if ! ollama list 2>/dev/null | grep -q "^${ERIN_MODEL}"; then
-    export OLLAMA_MAX_PARALLEL_DOWNLOADS="${OLLAMA_MAX_PARALLEL_DOWNLOADS:-2}"
-    ollama pull "$ERIN_MODEL" 2>&1 | while IFS= read -r line; do
-      echo "$line" >> "$LOG"
-      pct=$(echo "$line" | grep -oE '[0-9]+%' | tail -1)
-      if [[ -n "$pct" ]]; then
-        progress "Downloading ${ERIN_MODEL}... ${pct}"
-      fi
-    done
-  else
-    progress "Model ${ERIN_MODEL} ready"
-  fi
-fi
 
 # ── Download Whisper model ───────────────────────────────────────────
 WHISPER_MODEL_PATH="/opt/erinos/models/ggml-base.en.bin"
