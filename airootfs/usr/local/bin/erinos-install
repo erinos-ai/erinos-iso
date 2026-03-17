@@ -285,6 +285,10 @@ chmod 600 /etc/NetworkManager/system-connections/Wired.nmconnection
 # Boot loader (systemd-boot)
 bootctl install
 
+# Reserve 85% of RAM for GPU (GTT) on AMD APUs — leave the rest for the OS
+TOTAL_RAM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
+GTT_SIZE_MB=$(( TOTAL_RAM_MB * 85 / 100 ))
+
 mkdir -p /boot/loader/entries
 cat > /boot/loader/loader.conf <<EOF
 default erinos.conf
@@ -296,7 +300,7 @@ title   ErinOS
 linux   /vmlinuz-linux
 initrd  /amd-ucode.img
 initrd  /initramfs-linux.img
-options rd.luks.name=${LUKS_UUID}=cryptroot root=/dev/mapper/cryptroot rw quiet loglevel=3
+options rd.luks.name=${LUKS_UUID}=cryptroot root=/dev/mapper/cryptroot rw quiet loglevel=3 iommu=pt amdgpu.gttsize=${GTT_SIZE_MB}
 EOF
 
 # Initramfs with sd-encrypt hook
