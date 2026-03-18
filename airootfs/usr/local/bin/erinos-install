@@ -116,7 +116,7 @@ _do_install() {
       sqlite ffmpeg git \
       base-devel openssl libyaml libffi zlib \
       ollama-rocm \
-      gum jq' >/tmp/pacstrap.log 2>&1 &
+      vi gum jq' >/tmp/pacstrap.log 2>&1 &
   PID=$!
 
   SPIN='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
